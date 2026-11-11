@@ -1,0 +1,24 @@
+name: giovchat_example
+description: Shows the Giov chat screen, an unread badge and where push registration goes.
+publish_to: none
+version: 1.0.0
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  giovchat:
+    path: ..
+  # In a real app, also add what the notes in lib/main.dart mention:
+  #   flutter_secure_storage  (session storage)
+  #   file_picker / image_picker  (attachments)
+  #   firebase_messaging  (push tokens)
+
+dev_dependencies:
+  flutter_lints: ">=3.0.0 <5.0.0"
+
+flutter:
+  uses-material-design: true

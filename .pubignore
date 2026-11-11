@@ -1,0 +1,24 @@
+# Dart and Flutter build state
+.dart_tool/
+.packages
+.pub/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+coverage/
+pubspec.lock
+*.iml
+.idea/
+
+# The example's generated platform folders (run `flutter create .` in example/ to make them)
+example/android/
+example/ios/
+example/web/
+example/windows/
+example/linux/
+example/macos/
+example/.metadata
+
+# Not needed by package users (a .pubignore replaces .gitignore for publishing, so the lines above
+# are repeated here)
+.github/
