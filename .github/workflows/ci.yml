@@ -27,7 +27,9 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: ${{ matrix.flutter == 'stable' && '' || matrix.flutter }}
+          # Empty for the stable job, so the action takes the newest stable release. (The obvious
+          # `matrix.flutter == 'stable' && '' || matrix.flutter` passes "stable" through, since '' is falsy.)
+          flutter-version: ${{ matrix.flutter != 'stable' && matrix.flutter || '' }}
           cache: true
 
       - name: Install dependencies
