@@ -17,6 +17,11 @@ String _n(num value) => value == value.roundToDouble()
 /// Languages the SDK ships.
 const giovLocales = <String>['en', 'fr', 'es', 'pt', 'de'];
 
+String _enRatingFace(int score) =>
+    const ['Very bad', 'Bad', 'Okay', 'Good', 'Great'][(score - 1).clamp(0, 4)];
+String _enRatingWait(int seconds) =>
+    'Too many requests. Please wait $seconds s and try again.';
+
 class GiovChatStrings {
   const GiovChatStrings({
     required this.loading,
@@ -64,6 +69,26 @@ class GiovChatStrings {
     required this.required,
     required this.startChat,
     required this.privacy,
+    this.rateTitle = 'Rate this conversation',
+    this.yourRating = 'Your rating',
+    this.ratingFace = _enRatingFace,
+    this.ratingComment = 'Add a comment (optional)',
+    this.ratingSend = 'Send',
+    this.ratingThanks = 'Thanks',
+    this.ratingChange = 'Change',
+    this.ratingCancel = 'Cancel',
+    this.ratingClosed = 'This rating request has closed.',
+    this.ratingFailed = 'Couldn\'t send. Please try again.',
+    this.ratingTooMany = 'You have changed this rating too many times.',
+    this.ratingWait = _enRatingWait,
+    this.answerGroup = 'Rate this answer',
+    this.answerGood = 'Good answer',
+    this.answerBad = 'Bad answer',
+    this.answerReason = 'What went wrong? (optional)',
+    this.answerSkip = 'Skip',
+    this.answerFailed = 'Couldn\'t save',
+    this.closeRating = 'Close',
+    this.startNewConversation = 'Start a new conversation',
   });
 
   /// Shown while the configuration loads.
@@ -151,6 +176,66 @@ class GiovChatStrings {
   /// The header link to the workspace's privacy policy.
   final String privacy;
 
+  /// Title of the rating sheet and label of the rating card.
+  final String rateTitle;
+
+  /// Label of the group of five faces.
+  final String yourRating;
+
+  /// The label of face 1 (Very bad) to 5 (Great).
+  final String Function(int) ratingFace;
+
+  /// Placeholder and label of the optional comment.
+  final String ratingComment;
+
+  /// Button that sends the rating (and the reason after a thumbs-down).
+  final String ratingSend;
+
+  /// Shown with the chosen face after the visitor answered.
+  final String ratingThanks;
+
+  /// Button that lets the visitor change the answer.
+  final String ratingChange;
+
+  /// Button that leaves the change form.
+  final String ratingCancel;
+
+  /// Shown in place of a card that no longer takes answers.
+  final String ratingClosed;
+
+  /// Error: the rating could not be sent; try again.
+  final String ratingFailed;
+
+  /// Error: the rating was changed too many times.
+  final String ratingTooMany;
+
+  /// Error: too many requests; wait this many seconds.
+  final String Function(int) ratingWait;
+
+  /// Label of the thumbs under a GiovBot answer.
+  final String answerGroup;
+
+  /// Label of thumbs up.
+  final String answerGood;
+
+  /// Label of thumbs down.
+  final String answerBad;
+
+  /// Placeholder of the optional reason after a thumbs-down.
+  final String answerReason;
+
+  /// Button that skips the reason.
+  final String answerSkip;
+
+  /// Error: the vote could not be saved.
+  final String answerFailed;
+
+  /// Label of the button that closes the rating sheet.
+  final String closeRating;
+
+  /// Replaces the composer once the team closed the conversation.
+  final String startNewConversation;
+
   /// These strings with the given ones replaced. Empty strings are ignored.
   GiovChatStrings copyWith({
     String? loading,
@@ -198,6 +283,26 @@ class GiovChatStrings {
     String Function(String)? required,
     String? startChat,
     String? privacy,
+    String? rateTitle,
+    String? yourRating,
+    String Function(int)? ratingFace,
+    String? ratingComment,
+    String? ratingSend,
+    String? ratingThanks,
+    String? ratingChange,
+    String? ratingCancel,
+    String? ratingClosed,
+    String? ratingFailed,
+    String? ratingTooMany,
+    String Function(int)? ratingWait,
+    String? answerGroup,
+    String? answerGood,
+    String? answerBad,
+    String? answerReason,
+    String? answerSkip,
+    String? answerFailed,
+    String? closeRating,
+    String? startNewConversation,
   }) =>
       GiovChatStrings(
         loading: _keep(loading) ?? this.loading,
@@ -246,6 +351,27 @@ class GiovChatStrings {
         required: required ?? this.required,
         startChat: _keep(startChat) ?? this.startChat,
         privacy: _keep(privacy) ?? this.privacy,
+        rateTitle: _keep(rateTitle) ?? this.rateTitle,
+        yourRating: _keep(yourRating) ?? this.yourRating,
+        ratingFace: ratingFace ?? this.ratingFace,
+        ratingComment: _keep(ratingComment) ?? this.ratingComment,
+        ratingSend: _keep(ratingSend) ?? this.ratingSend,
+        ratingThanks: _keep(ratingThanks) ?? this.ratingThanks,
+        ratingChange: _keep(ratingChange) ?? this.ratingChange,
+        ratingCancel: _keep(ratingCancel) ?? this.ratingCancel,
+        ratingClosed: _keep(ratingClosed) ?? this.ratingClosed,
+        ratingFailed: _keep(ratingFailed) ?? this.ratingFailed,
+        ratingTooMany: _keep(ratingTooMany) ?? this.ratingTooMany,
+        ratingWait: ratingWait ?? this.ratingWait,
+        answerGroup: _keep(answerGroup) ?? this.answerGroup,
+        answerGood: _keep(answerGood) ?? this.answerGood,
+        answerBad: _keep(answerBad) ?? this.answerBad,
+        answerReason: _keep(answerReason) ?? this.answerReason,
+        answerSkip: _keep(answerSkip) ?? this.answerSkip,
+        answerFailed: _keep(answerFailed) ?? this.answerFailed,
+        closeRating: _keep(closeRating) ?? this.closeRating,
+        startNewConversation:
+            _keep(startNewConversation) ?? this.startNewConversation,
       );
 
   static String? _keep(String? value) =>
@@ -299,6 +425,33 @@ final GiovChatStrings _en = GiovChatStrings(
   required: (label) => '$label *',
   startChat: 'Start chat',
   privacy: 'GDPR and privacy',
+  rateTitle: 'Rate this conversation',
+  yourRating: 'Your rating',
+  ratingFace: (score) => const [
+    'Very bad',
+    'Bad',
+    'Okay',
+    'Good',
+    'Great'
+  ][(score - 1).clamp(0, 4)],
+  ratingComment: 'Add a comment (optional)',
+  ratingSend: 'Send',
+  ratingThanks: 'Thanks',
+  ratingChange: 'Change',
+  ratingCancel: 'Cancel',
+  ratingClosed: 'This rating request has closed.',
+  ratingFailed: 'Couldn\'t send. Please try again.',
+  ratingTooMany: 'You have changed this rating too many times.',
+  ratingWait: (seconds) =>
+      'Too many requests. Please wait $seconds s and try again.',
+  answerGroup: 'Rate this answer',
+  answerGood: 'Good answer',
+  answerBad: 'Bad answer',
+  answerReason: 'What went wrong? (optional)',
+  answerSkip: 'Skip',
+  answerFailed: 'Couldn\'t save',
+  closeRating: 'Close',
+  startNewConversation: 'Start a new conversation',
 );
 
 final GiovChatStrings _fr = GiovChatStrings(
@@ -349,6 +502,33 @@ final GiovChatStrings _fr = GiovChatStrings(
   required: (label) => '$label *',
   startChat: 'Démarrer le chat',
   privacy: 'RGPD et confidentialité',
+  rateTitle: 'Évaluer cette conversation',
+  yourRating: 'Votre note',
+  ratingFace: (score) => const [
+    'Très mauvais',
+    'Mauvais',
+    'Moyen',
+    'Bon',
+    'Excellent'
+  ][(score - 1).clamp(0, 4)],
+  ratingComment: 'Ajouter un commentaire (facultatif)',
+  ratingSend: 'Envoyer',
+  ratingThanks: 'Merci',
+  ratingChange: 'Modifier',
+  ratingCancel: 'Annuler',
+  ratingClosed: 'Cette demande d\'évaluation est terminée.',
+  ratingFailed: 'Envoi impossible. Réessayez.',
+  ratingTooMany: 'Vous avez trop souvent modifié cette note.',
+  ratingWait: (seconds) =>
+      'Trop de demandes. Patientez $seconds s puis réessayez.',
+  answerGroup: 'Évaluer cette réponse',
+  answerGood: 'Bonne réponse',
+  answerBad: 'Mauvaise réponse',
+  answerReason: 'Qu\'est-ce qui n\'allait pas ? (facultatif)',
+  answerSkip: 'Passer',
+  answerFailed: 'Enregistrement impossible',
+  closeRating: 'Fermer',
+  startNewConversation: 'Démarrer une nouvelle conversation',
 );
 
 final GiovChatStrings _es = GiovChatStrings(
@@ -398,6 +578,33 @@ final GiovChatStrings _es = GiovChatStrings(
   required: (label) => '$label *',
   startChat: 'Iniciar chat',
   privacy: 'RGPD y privacidad',
+  rateTitle: 'Valora esta conversación',
+  yourRating: 'Tu valoración',
+  ratingFace: (score) => const [
+    'Muy mala',
+    'Mala',
+    'Regular',
+    'Buena',
+    'Excelente'
+  ][(score - 1).clamp(0, 4)],
+  ratingComment: 'Añade un comentario (opcional)',
+  ratingSend: 'Enviar',
+  ratingThanks: 'Gracias',
+  ratingChange: 'Cambiar',
+  ratingCancel: 'Cancelar',
+  ratingClosed: 'Esta solicitud de valoración ha terminado.',
+  ratingFailed: 'No se pudo enviar. Inténtalo de nuevo.',
+  ratingTooMany: 'Has cambiado esta valoración demasiadas veces.',
+  ratingWait: (seconds) =>
+      'Demasiadas solicitudes. Espera $seconds s e inténtalo de nuevo.',
+  answerGroup: 'Valora esta respuesta',
+  answerGood: 'Buena respuesta',
+  answerBad: 'Mala respuesta',
+  answerReason: '¿Qué salió mal? (opcional)',
+  answerSkip: 'Omitir',
+  answerFailed: 'No se pudo guardar',
+  closeRating: 'Cerrar',
+  startNewConversation: 'Iniciar una conversación nueva',
 );
 
 final GiovChatStrings _pt = GiovChatStrings(
@@ -447,6 +654,33 @@ final GiovChatStrings _pt = GiovChatStrings(
   required: (label) => '$label *',
   startChat: 'Iniciar chat',
   privacy: 'Privacidade e RGPD',
+  rateTitle: 'Avalie esta conversa',
+  yourRating: 'Sua avaliação',
+  ratingFace: (score) => const [
+    'Muito ruim',
+    'Ruim',
+    'Regular',
+    'Boa',
+    'Ótima'
+  ][(score - 1).clamp(0, 4)],
+  ratingComment: 'Adicione um comentário (opcional)',
+  ratingSend: 'Enviar',
+  ratingThanks: 'Obrigado',
+  ratingChange: 'Alterar',
+  ratingCancel: 'Cancelar',
+  ratingClosed: 'Este pedido de avaliação foi encerrado.',
+  ratingFailed: 'Não foi possível enviar. Tente novamente.',
+  ratingTooMany: 'Você alterou esta avaliação vezes demais.',
+  ratingWait: (seconds) =>
+      'Muitas solicitações. Aguarde $seconds s e tente novamente.',
+  answerGroup: 'Avalie esta resposta',
+  answerGood: 'Boa resposta',
+  answerBad: 'Resposta ruim',
+  answerReason: 'O que deu errado? (opcional)',
+  answerSkip: 'Pular',
+  answerFailed: 'Não foi possível salvar',
+  closeRating: 'Fechar',
+  startNewConversation: 'Iniciar uma nova conversa',
 );
 
 final GiovChatStrings _de = GiovChatStrings(
@@ -497,6 +731,33 @@ final GiovChatStrings _de = GiovChatStrings(
   required: (label) => '$label *',
   startChat: 'Chat starten',
   privacy: 'DSGVO und Datenschutz',
+  rateTitle: 'Bewerte diese Unterhaltung',
+  yourRating: 'Deine Bewertung',
+  ratingFace: (score) => const [
+    'Sehr schlecht',
+    'Schlecht',
+    'Okay',
+    'Gut',
+    'Sehr gut'
+  ][(score - 1).clamp(0, 4)],
+  ratingComment: 'Kommentar hinzufügen (optional)',
+  ratingSend: 'Senden',
+  ratingThanks: 'Danke',
+  ratingChange: 'Ändern',
+  ratingCancel: 'Abbrechen',
+  ratingClosed: 'Diese Bewertungsanfrage ist beendet.',
+  ratingFailed: 'Senden fehlgeschlagen. Bitte versuche es erneut.',
+  ratingTooMany: 'Du hast diese Bewertung zu oft geändert.',
+  ratingWait: (seconds) =>
+      'Zu viele Anfragen. Warte $seconds s und versuche es erneut.',
+  answerGroup: 'Bewerte diese Antwort',
+  answerGood: 'Gute Antwort',
+  answerBad: 'Schlechte Antwort',
+  answerReason: 'Was ist schiefgelaufen? (optional)',
+  answerSkip: 'Überspringen',
+  answerFailed: 'Speichern fehlgeschlagen',
+  closeRating: 'Schließen',
+  startNewConversation: 'Neue Unterhaltung starten',
 );
 
 /// Every shipped language, by code.

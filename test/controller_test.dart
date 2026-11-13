@@ -245,24 +245,72 @@ void main() {
   });
 
   test(
-      'a closed or deleted conversation is forgotten: resume 409, history closed, history 404, deleted close frame',
+      'a conversation_state frame closes the chat at once and a reopen brings the composer back',
       () {
     fakeAsync((async) {
-      // Resume answers 409.
-      var rig = CRig(async, stored: testSession);
-      rig.server.resumeStatus = 409;
+      final rig = CRig(async, stored: testSession);
       rig.start();
+      rig.open();
+      expect(rig.phase, GiovChatPhase.active);
+      expect(rig.controller.closed, isFalse);
+      // No status (an older server): nothing changes.
+      rig.socket.receive({'type': 'conversation_state', 'handedOff': true});
+      expect(rig.controller.closed, isFalse);
+      rig.socket.receive({
+        'type': 'conversation_state',
+        'handedOff': true,
+        'assignedAgentName': 'Ada',
+        'status': 'closed'
+      });
+      expect(rig.controller.closed, isTrue);
+      expect(rig.phase, GiovChatPhase.active);
+      expect(settle(async, rig.controller.send('too late')), isFalse);
+      rig.socket.receive({'type': 'conversation_state', 'status': 'open'});
+      expect(rig.controller.closed, isFalse);
+      rig.dispose();
+    });
+  });
+
+  test(
+      'a closed conversation stays read-only until a new one is started; a deleted one, or one the server will not let us read, is forgotten',
+      () {
+    fakeAsync((async) {
+      // Resume answers 409 and the history cannot be read: forgotten.
+      var rig = CRig(async, stored: testSession);
+      rig.server
+        ..resumeStatus = 409
+        ..historyStatuses.addAll([401, 401]);
+      rig.start();
+      rig.open();
       expect(rig.phase, GiovChatPhase.ready);
       expect(rig.store.log, ['delete']);
-      expect(rig.sockets.all, isEmpty);
+      rig.dispose();
+
+      // Resume answers 409 and the history is readable: shown read-only.
+      rig = CRig(async, stored: testSession);
+      rig.server
+        ..resumeStatus = 409
+        ..status = 'closed';
+      rig.start();
+      rig.open();
+      expect(rig.controller.closed, isTrue);
+      expect(rig.phase, GiovChatPhase.active);
+      expect(rig.store.log, isEmpty);
       rig.dispose();
 
       // History says closed.
       rig = CRig(async, stored: testSession)..server.status = 'closed';
       rig.start();
       rig.open();
+      expect(rig.phase, GiovChatPhase.active);
+      expect(rig.controller.closed, isTrue);
+      expect(rig.store.log, isEmpty, reason: 'kept while it is shown');
+      expect(rig.controller.hasConversation, isTrue);
+      expect(settle(async, rig.controller.send('too late')), isFalse);
+      settle(async, rig.controller.startNewConversation());
+      rig.pump();
       expect(rig.phase, GiovChatPhase.ready);
-      expect(rig.controller.error, isA<GiovConversationClosedException>());
+      expect(rig.controller.closed, isFalse);
       expect(rig.store.log, ['delete']);
       expect(rig.controller.hasConversation, isFalse);
       expect(rig.socket.closedByClient, isTrue);
@@ -1033,6 +1081,9 @@ void main() {
       // The team closes it; the next message starts conv-2, which gets the token without the host.
       rig.server.status = 'closed';
       rig.controller.resume();
+      rig.pump();
+      expect(rig.controller.closed, isTrue);
+      settle(async, rig.controller.startNewConversation());
       rig.pump();
       expect(rig.phase, GiovChatPhase.ready);
       rig.server

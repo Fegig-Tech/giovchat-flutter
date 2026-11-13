@@ -2,7 +2,7 @@ name: giovchat
 description: >-
   Giov live chat for Flutter apps: a ready-made chat screen and a controller for the Giov visitor
   protocol, with realtime replies, an offline outbox, attachments and push.
-version: 0.1.0
+version: 0.2.0
 homepage: https://giovchat.app
 repository: https://github.com/Fegig-Tech/giovchat-flutter
 issue_tracker: https://github.com/Fegig-Tech/giovchat-flutter/issues

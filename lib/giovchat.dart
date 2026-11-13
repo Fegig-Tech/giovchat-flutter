@@ -11,6 +11,7 @@ export 'src/core/client.dart'
     show
         GiovAck,
         GiovChatClient,
+        GiovConversationState,
         GiovPushEnvironment,
         GiovPushFailure,
         GiovPushOptions,
@@ -32,9 +33,13 @@ export 'src/core/client.dart'
 export 'src/core/controller.dart'
     show
         GiovChatController,
+        GiovAnswerFeedbackEvent,
         GiovChatPhase,
         GiovConnectionStatus,
         GiovDraft,
+        GiovRatingEvent,
+        GiovRatingRequestedEvent,
+        GiovRatingSubmittedEvent,
         GiovUploadProgress,
         displayMessages,
         mergeMessages,
@@ -46,12 +51,21 @@ export 'src/core/identity.dart';
 export 'src/core/markdown.dart';
 export 'src/core/models.dart' hide asMap, tryJsonDecode;
 export 'src/core/outbox.dart';
+export 'src/core/rating.dart';
 export 'src/core/session_store.dart';
 export 'src/core/socket.dart';
 export 'src/core/unread.dart';
+export 'src/ui/branding.dart'
+    show
+        GiovBranding,
+        GiovFooterStyle,
+        giovFooterFontSize,
+        giovFooterMinContrast,
+        resolveGiovFooterStyle;
 export 'src/ui/bubbles.dart' show GiovBotMark;
 export 'src/ui/chat_markdown.dart' show ChatMarkdown;
 export 'src/ui/giov_chat.dart' show GiovChat, GiovChatState;
+export 'src/ui/rating_views.dart' show showGiovRatingSheet;
 export 'src/ui/look.dart'
     show GiovUrlOpener, defaultGiovUrlOpener, parseBrandColor;
 export 'src/ui/style_overrides.dart';

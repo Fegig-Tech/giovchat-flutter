@@ -1,3 +1,5 @@
+// Flutter 3.47 deprecates this import (Material moves to its own package); the SDK still supports Flutter 3.22.
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:giovchat/giovchat.dart';
 
@@ -117,21 +119,47 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // CONVERSATION RATINGS
+  // When the team (or GiovBot) asks "How did we do?", the chat screen draws a rating card by itself.
+  // Here the app offers its own entry point instead: `ratingRequest` is the card the visitor can
+  // answer now, and `showGiovRatingSheet` opens the built-in sheet (or call `submitRating` from your
+  // own UI). Pass `ratingCard: false` to GiovChat if you do not want the card inside the chat.
+  Widget _rateButton() => ListenableBuilder(
+        listenable: _chat,
+        builder: (context, _) {
+          final request = _chat.ratingRequest;
+          if (request == null || !_chat.ratingsSupported) {
+            return const SizedBox.shrink();
+          }
+          return TextButton(
+            onPressed: () => showGiovRatingSheet(context, _chat),
+            child:
+                Text(request.answered ? 'Change my rating' : 'Rate your chat'),
+          );
+        },
+      );
+
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(title: const Text('Giov chat example')),
         body: Center(
-          child: ValueListenableBuilder<int>(
-            valueListenable: GiovUnread.watch(tenantKey),
-            builder: (context, unread, _) => Badge(
-              isLabelVisible: unread > 0,
-              label: Text('$unread'),
-              child: FilledButton.icon(
-                onPressed: _openChat,
-                icon: const Icon(Icons.chat_bubble_outline),
-                label: const Text('Chat with us'),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ValueListenableBuilder<int>(
+                valueListenable: GiovUnread.watch(tenantKey),
+                builder: (context, unread, _) => Badge(
+                  isLabelVisible: unread > 0,
+                  label: Text('$unread'),
+                  child: FilledButton.icon(
+                    onPressed: _openChat,
+                    icon: const Icon(Icons.chat_bubble_outline),
+                    label: const Text('Chat with us'),
+                  ),
+                ),
               ),
-            ),
+              _rateButton(),
+            ],
           ),
         ),
       );

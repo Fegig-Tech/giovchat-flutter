@@ -4,6 +4,8 @@ library;
 import 'dart:async';
 import 'dart:math' as math;
 
+// Flutter 3.47 deprecates this import (Material moves to its own package); the SDK still supports Flutter 3.22.
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:http/http.dart' as http;
@@ -18,12 +20,14 @@ import '../core/identity.dart';
 import '../core/models.dart';
 import '../core/session_store.dart';
 import '../core/socket.dart';
+import 'branding.dart';
 import 'bubbles.dart';
 import 'chat_markdown.dart';
 import 'composer.dart';
 import 'header.dart';
 import 'look.dart';
 import 'pre_chat_form.dart';
+import 'rating_views.dart';
 import 'style_overrides.dart';
 
 /// Where the header's privacy button goes when the workspace set no `privacyPolicyUrl` (as on the web).
@@ -66,6 +70,11 @@ class GiovChat extends StatefulWidget {
     this.onConversationStart,
     this.onConnectionStatusChange,
     this.onUnreadCountChange,
+    this.ratingCard = true,
+    this.answerFeedback = true,
+    this.onRatingRequested,
+    this.onRatingSubmitted,
+    this.onAnswerFeedback,
     this.httpClient,
     this.socketFactory,
   }) : assert((controller == null) != (tenantKey == null),
@@ -93,6 +102,20 @@ class GiovChat extends StatefulWidget {
   final void Function(GiovConnectionStatus status)? onConnectionStatusChange;
   final void Function(int count)? onUnreadCountChange;
 
+  /// Draw the conversation rating card ("How did we do?") in the chat. Turn it off to build your
+  /// own with [GiovChatController.ratingRequest] and [GiovChatController.submitRating], or open the
+  /// built-in sheet with [GiovChatState.showRating] / [showGiovRatingSheet].
+  final bool ratingCard;
+
+  /// Thumbs under GiovBot answers (hidden on servers without them).
+  final bool answerFeedback;
+
+  /// For the controller the widget creates (set the same callbacks on a controller you own): the
+  /// team or GiovBot asked the visitor to rate the conversation.
+  final void Function(GiovRatingRequest request)? onRatingRequested;
+  final void Function(GiovRatingResult result)? onRatingSubmitted;
+  final void Function(GiovAnswerFeedbackEvent feedback)? onAnswerFeedback;
+
   /// For tests and proxies.
   final http.Client? httpClient;
   final GiovSocketFactory? socketFactory;
@@ -114,7 +137,7 @@ class GiovChat extends StatefulWidget {
   /// Overrides the dashboard's brand colour.
   final Color? primaryColor;
 
-  /// Fonts and colours per surface. Layout and the branding footer stay SDK-controlled.
+  /// Fonts and colours per surface, the footer included (`branding`). Layout stays SDK-controlled.
   final GiovChatStyleOverrides styleOverrides;
 
   /// Interface language ("fr", "pt-BR", …); defaults to the device language.
@@ -165,6 +188,30 @@ class GiovChatState extends State<GiovChat> with WidgetsBindingObserver {
     await _controller.reset();
   }
 
+  /// Rates the conversation; see [GiovChatController.submitRating].
+  Future<GiovRatingResult> submitRating(int score,
+          {String? comment, String? requestId}) =>
+      _controller.submitRating(score, comment: comment, requestId: requestId);
+
+  /// Thumbs on a GiovBot answer; see [GiovChatController.submitAnswerFeedback].
+  Future<void> submitAnswerFeedback(String messageId, GiovFeedbackValue value,
+          {String? reason}) =>
+      _controller.submitAnswerFeedback(messageId, value, reason: reason);
+
+  /// The rating card the visitor can answer or change now, or null.
+  GiovRatingRequest? get ratingRequest => _controller.ratingRequest;
+
+  /// Opens the built-in rating sheet for the open card. Resolves false at once when there is none.
+  Future<bool> showRating() {
+    if (!mounted) return Future.value(false);
+    return showGiovRatingSheet(context, _controller,
+        theme: widget.theme,
+        primaryColor: widget.primaryColor,
+        styleOverrides: widget.styleOverrides,
+        strings: _strings,
+        onOpenUrl: widget.onOpenUrl);
+  }
+
   /// See [GiovChatController.registerPushToken].
   Future<GiovPushResult> registerPushToken(
           String token, GiovPushPlatform platform,
@@ -188,6 +235,9 @@ class GiovChatState extends State<GiovChat> with WidgetsBindingObserver {
         onConversationStart: widget.onConversationStart,
         onConnectionStatusChange: widget.onConnectionStatusChange,
         onUnreadCountChange: widget.onUnreadCountChange,
+        onRatingRequested: widget.onRatingRequested,
+        onRatingSubmitted: widget.onRatingSubmitted,
+        onAnswerFeedback: widget.onAnswerFeedback,
         httpClient: widget.httpClient,
         socketFactory: widget.socketFactory,
       );
@@ -495,7 +545,8 @@ class GiovChatState extends State<GiovChat> with WidgetsBindingObserver {
               ),
             ),
             Expanded(child: SafeArea(top: false, bottom: false, child: body())),
-            if (config?.showBranding != false) _Branding(onOpen: look.openUrl),
+            if (config?.showBranding != false)
+              GiovFooter(style: look.style, onOpen: look.openUrl),
           ],
         ),
       ),
@@ -539,6 +590,7 @@ class GiovChatState extends State<GiovChat> with WidgetsBindingObserver {
     final count = 1 + messages.length + (typing ? 1 : 0);
     final canAttach = widget.attachmentPicker != null &&
         controller.hasConversation &&
+        !controller.closed &&
         (config?.attachmentPolicy ?? GiovAttachmentPolicy.defaultPolicy)
             .enabled &&
         (config?.attachmentPolicy ?? GiovAttachmentPolicy.defaultPolicy)
@@ -601,6 +653,18 @@ class GiovChatState extends State<GiovChat> with WidgetsBindingObserver {
                     onDiscard: id == null
                         ? null
                         : (_) => _controller.discardMessage(id),
+                    showRatingCard: widget.ratingCard,
+                    onRate: controller.ratingsSupported
+                        ? (requestId, score, comment) async {
+                            await controller.submitRating(score,
+                                comment: comment, requestId: requestId);
+                          }
+                        : null,
+                    onVote: widget.answerFeedback && controller.ratingsSupported
+                        ? (messageId, value, {reason}) =>
+                            controller.submitAnswerFeedback(messageId, value,
+                                reason: reason)
+                        : null,
                   );
                 }
                 return TypingIndicator(
@@ -610,30 +674,99 @@ class GiovChatState extends State<GiovChat> with WidgetsBindingObserver {
             ),
           ),
         ),
-        if (_files.isNotEmpty || _problem != null)
-          PendingFiles(
-              files: _files,
-              uploads: controller.uploads,
-              sending: controller.sending,
-              problem: _problem,
-              onRemove: (index) =>
-                  setState(() => _files = [..._files]..removeAt(index))),
-        Composer(
-          textController: _input,
-          placeholder: config?.textArea ?? strings.composerPlaceholder,
-          // The visitor can keep typing while files upload; only Send waits.
-          enabled: _composing,
-          canSend: _canSend,
-          onSend: () => unawaited(_send()),
-          onChanged: (value) {
-            setState(() {});
-            if (value.trim().isNotEmpty) controller.notifyTyping();
-          },
-          onAttach: canAttach ? () => unawaited(_attachFiles()) : null,
-          attachEnabled:
-              !controller.sending && _files.length < maxAttachedFiles,
-        ),
+        if (controller.closed)
+          _ClosedBar(
+              text: strings.conversationEnded,
+              label: strings.startNewConversation,
+              onTap: () {
+                _input.clear();
+                setState(() {
+                  _files = [];
+                  _problem = null;
+                });
+                unawaited(controller.startNewConversation());
+              })
+        else ...[
+          if (_files.isNotEmpty || _problem != null)
+            PendingFiles(
+                files: _files,
+                uploads: controller.uploads,
+                sending: controller.sending,
+                problem: _problem,
+                onRemove: (index) =>
+                    setState(() => _files = [..._files]..removeAt(index))),
+          Composer(
+            textController: _input,
+            placeholder: config?.textArea ?? strings.composerPlaceholder,
+            // The visitor can keep typing while files upload; only Send waits.
+            enabled: _composing,
+            canSend: _canSend,
+            onSend: () => unawaited(_send()),
+            onChanged: (value) {
+              setState(() {});
+              if (value.trim().isNotEmpty) controller.notifyTyping();
+            },
+            onAttach: canAttach ? () => unawaited(_attachFiles()) : null,
+            attachEnabled:
+                !controller.sending && _files.length < maxAttachedFiles,
+          ),
+        ],
       ],
+    );
+  }
+}
+
+/// In place of the composer once the team closed the conversation.
+class _ClosedBar extends StatelessWidget {
+  const _ClosedBar(
+      {required this.text, required this.label, required this.onTap});
+
+  final String text;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final look = GiovChatScope.of(context);
+    return Container(
+      key: const ValueKey('giov-closed-bar'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+          color: look.composerColor,
+          border: Border(top: BorderSide(color: look.divider, width: 0.5))),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(text, style: look.hintStyle, textAlign: TextAlign.center),
+          const SizedBox(height: 10),
+          Semantics(
+            button: true,
+            label: label,
+            excludeSemantics: true,
+            child: Material(
+              color: look.buttonColor,
+              borderRadius: BorderRadius.circular(8),
+              child: InkWell(
+                key: const ValueKey('giov-new-conversation'),
+                borderRadius: BorderRadius.circular(8),
+                onTap: onTap,
+                child: ConstrainedBox(
+                  constraints:
+                      const BoxConstraints(minHeight: 44, minWidth: 44),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 11),
+                    child: Text(label,
+                        textAlign: TextAlign.center,
+                        style: look.buttonTextStyle),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -732,47 +865,4 @@ class _ErrorView extends StatelessWidget {
       ),
     );
   }
-}
-
-/// "Powered by GiovChat". Deliberately isolated from the style overrides, like the other SDKs.
-class _Branding extends StatelessWidget {
-  const _Branding({required this.onOpen});
-
-  final GiovUrlOpener onOpen;
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-        link: true,
-        label: 'Powered by GiovChat',
-        excludeSemantics: true,
-        child: InkWell(
-          key: const ValueKey('giov-branding'),
-          onTap: () => unawaited(onOpen(Uri.parse(
-                  'https://giovchat.app/?utm_source=flutter_widget&utm_medium=powered_by'))
-              .catchError((Object _) => false)),
-          child: Container(
-            width: double.infinity,
-            constraints: const BoxConstraints(minHeight: 44),
-            alignment: Alignment.center,
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-            decoration: const BoxDecoration(
-                color: Color(0xFFFFFFFF),
-                border: Border(
-                    top: BorderSide(color: Color(0xFFEBEBEB), width: 0.5))),
-            child: const Text.rich(
-              TextSpan(
-                style: TextStyle(color: Color(0xFF52525B), fontSize: 12),
-                children: [
-                  TextSpan(text: 'Powered by '),
-                  TextSpan(
-                      text: 'GiovChat',
-                      style: TextStyle(
-                          color: Color(0xFF7C3AED),
-                          fontWeight: FontWeight.w700)),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
 }

@@ -28,6 +28,7 @@ import 'i18n.dart';
 import 'identity.dart';
 import 'models.dart';
 import 'outbox.dart';
+import 'rating.dart';
 import 'session_store.dart';
 import 'socket.dart';
 import 'unread.dart';
@@ -158,6 +159,31 @@ List<GiovMessage> displayMessages(
         : a.id.compareTo(b.id));
 }
 
+/// What happens to ratings, for hosts that want to react (analytics, their own prompt).
+sealed class GiovRatingEvent {
+  const GiovRatingEvent();
+}
+
+/// The team or GiovBot asked the visitor to rate the conversation (once per card, live or from history).
+class GiovRatingRequestedEvent extends GiovRatingEvent {
+  const GiovRatingRequestedEvent(this.request);
+  final GiovRatingRequest request;
+}
+
+/// The visitor's rating was stored.
+class GiovRatingSubmittedEvent extends GiovRatingEvent {
+  const GiovRatingSubmittedEvent(this.result);
+  final GiovRatingResult result;
+}
+
+/// The visitor's vote on a GiovBot answer was stored.
+class GiovAnswerFeedbackEvent extends GiovRatingEvent {
+  const GiovAnswerFeedbackEvent(this.messageId, this.value, {this.reason});
+  final String messageId;
+  final GiovFeedbackValue value;
+  final String? reason;
+}
+
 /// How long after the last keystroke the agent stops seeing "typing" (the widget's value).
 const typingIdle = Duration(milliseconds: 2500);
 
@@ -177,6 +203,9 @@ class GiovChatController extends ChangeNotifier {
     this.onConversationStart,
     this.onConnectionStatusChange,
     this.onUnreadCountChange,
+    this.onRatingRequested,
+    this.onRatingSubmitted,
+    this.onAnswerFeedback,
     Outbox? outbox,
     http.Client? httpClient,
     GiovSocketFactory? socketFactory,
@@ -229,6 +258,15 @@ class GiovChatController extends ChangeNotifier {
   final void Function(String conversationId)? onConversationStart;
   final void Function(GiovConnectionStatus status)? onConnectionStatusChange;
   final void Function(int count)? onUnreadCountChange;
+
+  /// A rating card the visitor has not answered arrived (once per card).
+  final void Function(GiovRatingRequest request)? onRatingRequested;
+
+  /// The visitor's rating was stored.
+  final void Function(GiovRatingResult result)? onRatingSubmitted;
+
+  /// The visitor's vote on a GiovBot answer was stored.
+  final void Function(GiovAnswerFeedbackEvent feedback)? onAnswerFeedback;
 
   final GiovContact? _baseContact;
   final GiovSessionStore _store;
@@ -298,6 +336,12 @@ class GiovChatController extends ChangeNotifier {
   GiovConnectionStatus _status = GiovConnectionStatus.disconnected;
   GiovMessage? _lastIncoming;
   List<GiovMessage>? _display;
+  bool _ratingsSupported = true;
+  bool _closed = false;
+  final Set<String> _announcedRatings = {};
+  Timer? _ratingTimer;
+  int? _ratingTimerAt;
+  final _ratingEvents = StreamController<GiovRatingEvent>.broadcast(sync: true);
 
   // ---------------------------------------------------------------------------------------------
   // State for the UI
@@ -308,8 +352,23 @@ class GiovChatController extends ChangeNotifier {
   GiovWidgetConfig? get config => _config;
 
   /// What to draw, oldest first: saved messages, sending ones, and streaming drafts.
-  List<GiovMessage> get messages => _display ??=
-      displayMessages(_messages, outbox.list(), _drafts, describe: _describe);
+  List<GiovMessage> get messages => _display ??= supersedeRatings(
+      displayMessages(_messages, outbox.list(), _drafts, describe: _describe));
+
+  /// The rating card the visitor can answer or change now, or null. An older card the visitor never
+  /// answered gives way to a newer one at once.
+  GiovRatingRequest? get ratingRequest =>
+      pendingRatingRequest(_messages, _clock().millisecondsSinceEpoch);
+
+  /// The team closed the conversation: it stays on screen, read-only (history visible, a rating
+  /// card still answerable), until [startNewConversation].
+  bool get closed => _closed;
+
+  /// False once the server turned out not to take ratings (an older server): hide your own controls.
+  bool get ratingsSupported => _ratingsSupported;
+
+  /// Rating requests, answers and thumbs as they happen.
+  Stream<GiovRatingEvent> get ratingEvents => _ratingEvents.stream;
 
   /// Who the header shows (person, bot, team); null until the configuration has loaded.
   GiovHeaderIdentity? get header => _config == null
@@ -444,6 +503,8 @@ class GiovChatController extends ChangeNotifier {
     _loadedStore = true;
     outbox.clear();
     _localFiles.clear();
+    _closed = false;
+    _announcedRatings.clear();
     _startNow = false;
     _hasConversation = false;
     _messages = const [];
@@ -471,6 +532,37 @@ class GiovChatController extends ChangeNotifier {
     if (_started) await _restart();
   }
 
+  /// Leaves the closed conversation: it is cleared (messages, stored session) and the chat is ready
+  /// for a new one, which starts with the visitor's next message. Contact details, the outbox and
+  /// the push token are kept. Does nothing while the conversation is open.
+  Future<void> startNewConversation() async {
+    if (!_closed || _disposed) return;
+    _generation++;
+    _stopTyping();
+    _cancelSubs();
+    _client.disconnect();
+    _session = null;
+    _startNow = false;
+    _closed = false;
+    _hasConversation = false;
+    _messages = const [];
+    _drafts.clear();
+    _announcedRatings.clear();
+    _agentTyping = false;
+    _agentTypingIsBot = null;
+    _agentName = _agentAvatar = null;
+    _error = null;
+    _hadConnection = false;
+    _retryAttempt = 0;
+    try {
+      await _store.delete(_scope);
+    } on Object {
+      _report(const GiovStorageException(
+          'Saved chat session could not be cleared.'));
+    }
+    if (_started) await _restart();
+  }
+
   /// The pre-chat form was submitted: stores the contact details and starts the conversation.
   Future<void> submitContact(GiovContact info) {
     _contact = _contact.merge(info);
@@ -487,10 +579,13 @@ class GiovChatController extends ChangeNotifier {
     _typingTimer?.cancel();
     _retryTimer?.cancel();
     _retryTimer = null;
+    _ratingTimer?.cancel();
+    _ratingTimer = null;
     _cancelSubs();
     _pushRequest?.done.complete(
         const GiovPushResult.notRegistered(GiovPushFailure.noConversation));
     _pushRequest = null;
+    unawaited(_ratingEvents.close());
     _outboxStop();
     GiovUnread.forget(this);
     _client.dispose();
@@ -588,6 +683,7 @@ class GiovChatController extends ChangeNotifier {
 
   Future<void> _clearSession() async {
     _session = null;
+    _closed = false;
     _hasConversation = false;
     _hadConnection = false;
     _messages = const [];
@@ -645,17 +741,25 @@ class GiovChatController extends ChangeNotifier {
     }
     if (!alive()) return;
     final existing = _session;
+    // A 409 on resume means the team closed it: its history is shown read-only when the server still
+    // lets this session read it (a rating card can arrive after the close); otherwise it is forgotten.
+    var resumedClosed = false;
     if (existing != null) {
       try {
         _session = await _client.resumeConversation(existing, _contact);
       } on GiovChatException catch (failure) {
         if (!alive()) return;
-        if (failure is! GiovSessionExpiredException &&
-            failure is! GiovConversationClosedException &&
-            failure.status != 404) {
-          rethrow;
+        if (failure is GiovConversationClosedException &&
+            failure.status == 409) {
+          resumedClosed = true;
+        } else {
+          if (failure is! GiovSessionExpiredException &&
+              failure is! GiovConversationClosedException &&
+              failure.status != 404) {
+            rethrow;
+          }
+          await _clearSession();
         }
-        await _clearSession();
       }
     }
     if (!alive()) return;
@@ -748,6 +852,32 @@ class GiovChatController extends ChangeNotifier {
       ..add(_client.attachmentAccess.listen((value) {
         if (alive()) _captureAccess(value);
       }))
+      // A card was answered or changed on another device, or replaced by a newer one.
+      ..add(_client.ratingFrames.listen((frame) {
+        if (!alive()) return;
+        _messages = patchRating(_messages, frame);
+        _changed();
+      }))
+      // The team closed or reopened the conversation: the switch is immediate (older servers send
+      // no status, and the history decides).
+      ..add(_client.conversationStates.listen((state) {
+        if (!alive()) return;
+        if (state.closed == true) {
+          _closed = true;
+          _drafts.clear();
+          _agentTyping = false;
+          _agentTypingIsBot = null;
+          _error = null;
+          _phase = GiovChatPhase.active;
+          _changed();
+        } else if (state.closed == false) {
+          if (_closed) {
+            _closed = false;
+            _changed();
+          }
+          _client.flush();
+        }
+      }))
       ..add(_client.typing.listen((event) {
         if (!alive()) return;
         // A stop for the other kind keeps the indicator (a person's typing_end must not hide the bot's).
@@ -784,17 +914,31 @@ class GiovChatController extends ChangeNotifier {
           await _forget(generation);
           return;
         }
+        // A closed conversation this server will not let us read any more: forget it, as before.
+        if (resumedClosed &&
+            (failure is GiovSessionExpiredException || failure.status == 403)) {
+          await _forget(generation);
+          return;
+        }
         rethrow;
       }
       if (!alive()) return;
-      if (history.closed) {
-        await _forget(generation);
-        return;
-      }
       _captureAccess(history.attachmentAccess);
       _agentName = history.assignedAgentName;
       _agentAvatar = history.assignedAgentAvatar;
       _messages = mergeMessages(_messages, history.messages);
+      if (history.closed) {
+        // Read-only from here on: the history stays visible and a rating card stays answerable.
+        _closed = true;
+        _drafts.clear();
+        _agentTyping = false;
+        _agentTypingIsBot = null;
+        _error = null;
+        _phase = GiovChatPhase.active;
+        _changed();
+        return;
+      }
+      _closed = false;
       _changed();
       _client.flush();
     }
@@ -851,7 +995,12 @@ class GiovChatController extends ChangeNotifier {
       }
       _changed();
     }));
-    await _client.connect(session);
+    try {
+      await _client.connect(session);
+    } on GiovChatException {
+      // The history below decides whether a closed conversation can be shown.
+      if (!resumedClosed) rethrow;
+    }
     if (!alive()) return;
     await refreshHistory();
   }
@@ -882,6 +1031,7 @@ class GiovChatController extends ChangeNotifier {
       {List<GiovPickedFile> files = const []}) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty && files.isEmpty) return false;
+    if (_closed) return false;
     if (_phase != GiovChatPhase.active &&
         _phase != GiovChatPhase.connecting &&
         _phase != GiovChatPhase.ready) {
@@ -1104,6 +1254,129 @@ class GiovChatController extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------------------------------
+  // Ratings
+
+  /// Rates the conversation. [requestId] defaults to the open card (the server picks it when none
+  /// is known). Throws [GiovRatingException] (see [GiovRatingProblem]: invalid, closed, replaced,
+  /// too many changes, not found, unsupported), [GiovRateLimitedException] (wait `retryAfter`) or
+  /// a transport failure. The card on screen is patched on success and made read-only or hidden
+  /// when the server says it is closed or replaced.
+  Future<GiovRatingResult> submitRating(int score,
+      {String? comment, String? requestId}) async {
+    if (_disposed || _client.session == null) {
+      throw const GiovDisconnectedException('Chat is not connected.');
+    }
+    final id = requestId ?? ratingRequest?.requestId;
+    try {
+      final result =
+          await _client.submitRating(score, comment: comment, requestId: id);
+      if (_disposed) return result;
+      _messages = patchRating(
+          _messages,
+          GiovRatingFrame(
+              requestId: result.requestId,
+              closesAt: result.closesAt,
+              score: result.score,
+              comment: result.comment));
+      _changed();
+      _emitRating(GiovRatingSubmittedEvent(result));
+      try {
+        onRatingSubmitted?.call(result);
+      } on Object {
+        // Host callbacks are isolated.
+      }
+      return result;
+    } on GiovRatingException catch (failure) {
+      _noteRatingFailure(failure, id);
+      rethrow;
+    }
+  }
+
+  /// Thumbs on a GiovBot answer, shown at once and taken back if the server refuses.
+  /// [GiovFeedbackValue.none] removes the vote; a [reason] is kept only with a thumbs-down.
+  Future<void> submitAnswerFeedback(String messageId, GiovFeedbackValue value,
+      {String? reason}) async {
+    if (_disposed || _client.session == null) {
+      throw const GiovDisconnectedException('Chat is not connected.');
+    }
+    final before = _messages
+        .where((message) => message.id == messageId)
+        .map((message) => message.feedback)
+        .firstOrNull;
+    _messages = applyFeedback(_messages, messageId, value);
+    _changed();
+    try {
+      await _client.submitAnswerFeedback(messageId, value, reason: reason);
+    } on GiovChatException catch (failure) {
+      if (_disposed) rethrow;
+      _messages = applyFeedback(_messages, messageId, before);
+      if (failure is GiovRatingException) _noteRatingFailure(failure, null);
+      _changed();
+      rethrow;
+    }
+    final text = value == GiovFeedbackValue.down ? reason?.trim() : null;
+    final event = GiovAnswerFeedbackEvent(messageId, value,
+        reason: text == null || text.isEmpty ? null : text);
+    _emitRating(event);
+    try {
+      onAnswerFeedback?.call(event);
+    } on Object {
+      // Host callbacks are isolated.
+    }
+  }
+
+  void _noteRatingFailure(GiovRatingException failure, String? requestId) {
+    if (_disposed) return;
+    final now = _clock().millisecondsSinceEpoch;
+    switch (failure.problem) {
+      case GiovRatingProblem.unsupported:
+        _ratingsSupported = false;
+      case GiovRatingProblem.ratingClosed || GiovRatingProblem.requestReplaced:
+        if (requestId != null) {
+          _messages =
+              markRating(_messages, requestId, failure.problem, nowMs: now);
+        }
+      default:
+        return;
+    }
+    _changed();
+  }
+
+  void _emitRating(GiovRatingEvent event) {
+    if (!_ratingEvents.isClosed) _ratingEvents.add(event);
+  }
+
+  /// Keeps the "closes at" timer on the open card and announces a card the visitor has not answered.
+  void _syncRatings() {
+    final now = _clock().millisecondsSinceEpoch;
+    final request = pendingRatingRequest(_messages, now);
+    if (request == null) {
+      _ratingTimer?.cancel();
+      _ratingTimer = null;
+      _ratingTimerAt = null;
+      return;
+    }
+    if (_ratingTimerAt != request.closesAt) {
+      _ratingTimer?.cancel();
+      _ratingTimerAt = request.closesAt;
+      final wait = (request.closesAt - now + 50).clamp(1, 0x7fffffff);
+      _ratingTimer = Timer(Duration(milliseconds: wait), () {
+        _ratingTimer = null;
+        _ratingTimerAt = null;
+        _changed();
+      });
+    }
+    if (!request.answered && _announcedRatings.add(request.requestId)) {
+      _emitRating(GiovRatingRequestedEvent(request));
+      try {
+        onRatingRequested?.call(request);
+      } on Object {
+        // Host callbacks are isolated.
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Plumbing
 
   GiovAttachment _describe(String url) =>
@@ -1145,6 +1418,8 @@ class GiovChatController extends ChangeNotifier {
 
   void _changed() {
     _display = null;
-    if (!_disposed) notifyListeners();
+    if (_disposed) return;
+    _syncRatings();
+    notifyListeners();
   }
 }

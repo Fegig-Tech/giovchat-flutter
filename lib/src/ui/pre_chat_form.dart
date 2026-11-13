@@ -2,6 +2,8 @@
 /// supplied. The button stays disabled until every required field is valid.
 library;
 
+// Flutter 3.47 deprecates this import (Material moves to its own package); the SDK still supports Flutter 3.22.
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 
 import '../core/models.dart';

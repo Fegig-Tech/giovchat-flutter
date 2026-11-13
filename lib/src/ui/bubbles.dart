@@ -1,14 +1,18 @@
 /// Message bubbles, the greeting, the typing indicator and the GiovBot mark.
 library;
 
+// Flutter 3.47 deprecates this import (Material moves to its own package); the SDK still supports Flutter 3.22.
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 
 import '../core/identity.dart';
 import '../core/models.dart';
+import '../core/rating.dart';
 import 'attachment_views.dart';
 import 'brand_assets.dart';
 import 'chat_markdown.dart';
 import 'look.dart';
+import 'rating_views.dart';
 
 /// The compact GiovBot avatar shown beside AI replies.
 class GiovBotMark extends StatelessWidget {
@@ -197,9 +201,24 @@ class _TypingIndicatorState extends State<TypingIndicator>
 
 class MessageBubble extends StatelessWidget {
   const MessageBubble(
-      {super.key, required this.message, this.onRetry, this.onDiscard});
+      {super.key,
+      required this.message,
+      this.onRetry,
+      this.onDiscard,
+      this.showRatingCard = true,
+      this.onRate,
+      this.onVote});
 
   final GiovMessage message;
+
+  /// Draw the conversation rating card under a message that carries one.
+  final bool showRatingCard;
+
+  /// Answers the card; without it the card is read-only.
+  final GiovRateCallback? onRate;
+
+  /// Thumbs under GiovBot answers; without it none are drawn.
+  final GiovVoteCallback? onVote;
 
   /// Offered on a visitor message that failed to send.
   final void Function(GiovMessage message)? onRetry;
@@ -310,7 +329,17 @@ class MessageBubble extends StatelessWidget {
                   ],
                 ),
               )
-            : null,
+            : (onVote != null && canVoteOn(message)
+                ? Padding(
+                    // Under the bubble, past the GiovBot mark.
+                    padding: const EdgeInsets.only(left: 36),
+                    child: GiovAnswerFeedbackBar(
+                        key: ValueKey('feedback:${message.id}'),
+                        messageId: message.id,
+                        value: message.feedback,
+                        onVote: onVote!),
+                  )
+                : null),
         child: Semantics(
           container: true,
           child: Opacity(
@@ -350,6 +379,11 @@ class MessageBubble extends StatelessWidget {
                   if (message.content.isNotEmpty)
                     giovMarkdown(context, look, message.content, contentStyle,
                         accent: accent, code: code),
+                  if (showRatingCard && message.rating != null && !visitor)
+                    GiovRatingCard(
+                        key: ValueKey('rating:${message.rating!.requestId}'),
+                        block: message.rating!,
+                        onRate: onRate),
                   if (!message.isStreaming)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),

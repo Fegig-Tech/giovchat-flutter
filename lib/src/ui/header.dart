@@ -1,6 +1,8 @@
 /// The chat header: avatar (photo, GiovBot mark or initial), who is answering and a status line.
 library;
 
+// Flutter 3.47 deprecates this import (Material moves to its own package); the SDK still supports Flutter 3.22.
+// ignore: deprecated_member_use
 import 'package:flutter/material.dart';
 
 import '../core/identity.dart';

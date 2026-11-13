@@ -142,6 +142,9 @@ class FakeServer {
   int tokenLifetimeSeconds = 900;
   int createdCounter = 0;
 
+  /// Answers the rating and answer-feedback routes (404 without it, like an older server).
+  http.Response Function(http.Request request)? ratingHandler;
+
   /// The id the next started conversation gets.
   String nextConversationId = 'conv-1';
 
@@ -237,6 +240,11 @@ class FakeServer {
       return pushStatus == 200
           ? _json({'registered': true})
           : _json({'error': 'not_found'}, pushStatus);
+    }
+    if (path.endsWith('/rating') || path.contains('/feedback')) {
+      bump(path.endsWith('/rating') ? 'rating' : 'feedback');
+      final handler = ratingHandler;
+      if (handler != null) return handler(request);
     }
     return _json({'error': 'not_found'}, 404);
   }

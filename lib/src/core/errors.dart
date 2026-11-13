@@ -72,6 +72,42 @@ class GiovSendFailedException extends GiovChatException {
   const GiovSendFailedException(super.message, {super.code});
 }
 
+/// Why a rating or an answer vote was refused (docs/protocol, "Conversation ratings").
+enum GiovRatingProblem {
+  /// `400 invalid_rating`: the score is not 1 to 5, or the comment is over 1,000 characters.
+  invalidRating,
+
+  /// `400 invalid_feedback`: the vote is not up, down or none, or the reason is over 300 characters.
+  invalidFeedback,
+
+  /// `404 request_not_found`: there is no such card.
+  requestNotFound,
+
+  /// `404 message_not_found`: the message is not a GiovBot answer of this conversation.
+  messageNotFound,
+
+  /// `409 request_replaced`: a newer card took its place; hide the card.
+  requestReplaced,
+
+  /// `409 rating_closed`: past `closesAt`; show the card read-only.
+  ratingClosed,
+
+  /// `429 too_many_changes`: the card was changed 20 times.
+  tooManyChanges,
+
+  /// A 404 with no error code: an older server without these routes. Hide the controls.
+  unsupported,
+}
+
+/// A rating or an answer vote was refused. A `429 rate_limited` is a [GiovRateLimitedException]
+/// and a dead session a [GiovSessionExpiredException], as everywhere else.
+class GiovRatingException extends GiovChatException {
+  const GiovRatingException(this.problem, super.message,
+      {super.status, super.code});
+
+  final GiovRatingProblem problem;
+}
+
 /// The server answered something the protocol does not allow.
 class GiovInvalidResponseException extends GiovChatException {
   const GiovInvalidResponseException(super.message, {super.status});

@@ -19,11 +19,12 @@ import 'attachments.dart';
 import 'errors.dart';
 import 'models.dart';
 import 'outbox.dart';
+import 'rating.dart';
 import 'socket.dart';
 
 /// Keep in step with pubspec.yaml; sent as `X-Giov-Client` so the dashboard can show where the
 /// chat is installed.
-const giovSdkVersion = '0.1.0';
+const giovSdkVersion = '0.2.0';
 const giovClientMarker = 'flutter/$giovSdkVersion';
 const giovDefaultBaseUrl = 'https://api.giovchat.app';
 
@@ -148,6 +149,21 @@ class _Reply {
 GiovChatException toGiovException(Object error) =>
     error is GiovChatException ? error : GiovNetworkException('$error');
 
+/// The `conversation_state` frame: [closed] is true or false when the server said `closed` or `open`,
+/// null when it sent no status (older servers).
+class GiovConversationState {
+  const GiovConversationState(
+      {this.closed,
+      this.handedOff,
+      this.assignedAgentName,
+      this.assignedAgentAvatar});
+
+  final bool? closed;
+  final bool? handedOff;
+  final String? assignedAgentName;
+  final String? assignedAgentAvatar;
+}
+
 /// Transport for one workspace. Create one per chat; [connect] one conversation at a time.
 class GiovChatClient {
   GiovChatClient({
@@ -198,6 +214,8 @@ class GiovChatClient {
   final _errors = StreamController<GiovChatException>.broadcast(sync: true);
   final _streams = StreamController<GiovStreamEvent>.broadcast(sync: true);
   final _access = StreamController<AttachmentAccess>.broadcast(sync: true);
+  final _ratings = StreamController<GiovRatingFrame>.broadcast(sync: true);
+  final _states = StreamController<GiovConversationState>.broadcast(sync: true);
 
   /// Chat messages from the socket: replies, and (rarely) the visitor's own from another device.
   /// A saved GiovBot reply carries `clientMessageId == 'stream:<streamId>'`, the key its draft had.
@@ -218,6 +236,13 @@ class GiovChatClient {
   /// A newer attachment download token arrived (with a visitor token, an upload or history).
   Stream<AttachmentAccess> get attachmentAccess => _access.stream;
 
+  /// A rating card was answered or changed (on any device), or replaced by a newer one.
+  Stream<GiovRatingFrame> get ratingFrames => _ratings.stream;
+
+  /// The conversation was closed or reopened (`conversation_state`, sent on close and reopen) or
+  /// handed to someone. `status` is null on older servers: keep using the history's status there.
+  Stream<GiovConversationState> get conversationStates => _states.stream;
+
   GiovSocket? _socket;
   void Function()? _dropSocket;
   void Function()? _cancelHandshake;
@@ -233,6 +258,7 @@ class GiovChatClient {
   VisitorToken? _visitorToken;
   Future<VisitorToken>? _tokenRequest;
   bool _pushUnsupported = false;
+  bool _ratingsUnsupported = false;
   final _pending = <String, List<Completer<GiovMessage>>>{};
 
   int _nowMs() => _clock().millisecondsSinceEpoch;
@@ -632,6 +658,30 @@ class GiovChatClient {
       }
       return;
     }
+    if (type == 'conversation_state') {
+      final status = data['status'];
+      final name = data['assignedAgentName'];
+      final avatar = data['assignedAgentAvatar'];
+      _emit(
+          _states,
+          GiovConversationState(
+            closed: status == 'closed'
+                ? true
+                : status == 'open'
+                    ? false
+                    : null,
+            handedOff:
+                data['handedOff'] is bool ? data['handedOff'] as bool : null,
+            assignedAgentName: name is String ? name : null,
+            assignedAgentAvatar: avatar is String ? avatar : null,
+          ));
+      return;
+    }
+    if (type == 'rating') {
+      final frame = GiovRatingFrame.tryParse(data);
+      if (frame != null) _emit(_ratings, frame);
+      return;
+    }
     // Unknown frame types are ignored (protocol versioning).
     if (type != null && type != 'message') return;
     var message = GiovMessage.fromJson(data);
@@ -987,6 +1037,71 @@ class GiovChatClient {
     _pending.clear();
   }
 
+  /// True once the server answered a rating or feedback route with a bare 404: an older server, so
+  /// the controls are hidden.
+  bool get ratingsUnsupported => _ratingsUnsupported;
+
+  /// Answers the conversation's rating card (`POST /conversations/{id}/rating`). Leave [requestId]
+  /// out to answer the open card. The same answer again is a no-op; a different one replaces it
+  /// until the card closes. Throws [GiovRatingException] (see [GiovRatingProblem]),
+  /// [GiovRateLimitedException] (with `retryAfter`), [GiovSessionExpiredException] or a transport
+  /// failure.
+  Future<GiovRatingResult> submitRating(int score,
+      {String? comment, String? requestId}) async {
+    if (score < 1 || score > 5) {
+      throw const GiovRatingException(GiovRatingProblem.invalidRating,
+          'The score must be a whole number from 1 to 5.',
+          code: 'invalid_rating');
+    }
+    final text = comment?.trim() ?? '';
+    if (text.length > maxRatingComment) {
+      throw const GiovRatingException(
+          GiovRatingProblem.invalidRating, 'The comment is too long.',
+          code: 'invalid_rating');
+    }
+    final body = await _visitorPost('/rating', {
+      'score': score,
+      if (requestId != null) 'requestId': requestId,
+      if (text.isNotEmpty) 'comment': text,
+    });
+    final result = GiovRatingResult.tryParse(body, requestId: requestId);
+    if (result == null) {
+      throw const GiovInvalidResponseException('Invalid rating response.');
+    }
+    return result;
+  }
+
+  /// Thumbs up or down on a GiovBot answer (`POST /conversations/{id}/messages/{messageId}/feedback`);
+  /// [GiovFeedbackValue.none] takes the vote back. A [reason] is kept only with a thumbs-down.
+  Future<void> submitAnswerFeedback(String messageId, GiovFeedbackValue value,
+      {String? reason}) async {
+    final text = value == GiovFeedbackValue.down ? reason?.trim() ?? '' : '';
+    if (messageId.isEmpty || text.length > maxFeedbackReason) {
+      throw const GiovRatingException(
+          GiovRatingProblem.invalidFeedback, 'The vote is not valid.',
+          code: 'invalid_feedback');
+    }
+    await _visitorPost('/messages/${Uri.encodeComponent(messageId)}/feedback', {
+      'value': value.name,
+      if (text.isNotEmpty) 'reason': text,
+    });
+  }
+
+  /// One visitor-token POST on this conversation, the token renewed once on 401.
+  Future<Map<String, Object?>> _visitorPost(
+      String path, Map<String, Object?> json) async {
+    if (_session == null) throw const GiovDisconnectedException();
+    final reply = await _authed('POST', '$_conversationPath$path',
+        json: json, headers: {'X-Giov-Client': giovClientMarker});
+    if (reply.ok) return reply.body;
+    final failure = ratingFailure(reply.status, reply.body, reply.retryAfter);
+    if (failure is GiovRatingException &&
+        failure.problem == GiovRatingProblem.unsupported) {
+      _ratingsUnsupported = true;
+    }
+    throw failure;
+  }
+
   /// Closes the connection. Unsent messages stay in the outbox; futures from [sendMessage] fail.
   void disconnect() {
     _rejectPending();
@@ -1037,7 +1152,9 @@ class GiovChatClient {
       _typing,
       _errors,
       _streams,
-      _access
+      _access,
+      _ratings,
+      _states
     ]) {
       unawaited(controller.close());
     }
